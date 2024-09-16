@@ -50,19 +50,34 @@ func (r *NewsRepository) Update(ctx context.Context, news *entity.News) (*entity
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	query = "DELETE FROM news_categories WHERE news_id = $1"
-	_, err = tx.Exec(ctx, query, news.ID)
-	if err != nil {
-		return nil, fmt.Errorf("%s: failed to delete old categories: %w", op, err)
+	// Формируем запрос для обновления категорий
+	values := make([]string, 0, len(news.Categories))
+	args := make([]interface{}, 0, len(news.Categories)*2)
+	for i, categoryID := range news.Categories {
+		values = append(values, fmt.Sprintf("($%d, $%d)", i*2+1, i*2+2))
+		args = append(args, news.ID, categoryID)
 	}
 
-	for _, categoryID := range news.Categories {
-		query = "INSERT INTO news_categories (news_id, category_id) VALUES ($1, $2)"
-		_, err = tx.Exec(ctx, query, news.ID, categoryID)
-		if err != nil {
-			return nil, fmt.Errorf("%s: failed to insert into news_categories: %w", op, err)
-		}
+	query = fmt.Sprintf("INSERT INTO news_categories (news_id, category_id) VALUES %s ON CONFLICT (news_id, category_id) DO UPDATE SET category_id = EXCLUDED.category_id",
+		join(values, ","))
+	_, err = tx.Exec(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%s: failed to upsert into news_categories: %w", op, err)
 	}
 
 	return news, nil
+}
+
+func join(elements []string, separator string) string {
+	if len(elements) == 0 {
+		return ""
+	}
+	if len(elements) == 1 {
+		return elements[0]
+	}
+	result := elements[0]
+	for _, element := range elements[1:] {
+		result += separator + element
+	}
+	return result
 }
